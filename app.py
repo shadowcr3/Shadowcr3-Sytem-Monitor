@@ -15,7 +15,7 @@ import sysinfo
 from collector import Collector, Snapshot
 
 APP_NAME = "Shadowcr3 System Monitor"
-VERSION = "0.3.1"
+VERSION = "0.4.0"
 REFRESH_MS = 1000
 ACCENT = "#2ec5ff"
 
@@ -331,11 +331,14 @@ class SettingsPage(QWidget):
 class SensorsPage(QWidget):
     def __init__(self) -> None:
         super().__init__()
+        self.fans = Panel("Fans", "Waiting for fan data...")
+        self.fans.sub.setWordWrap(True)
         self.power = Panel("Power", "Waiting for LibreHardwareMonitor...")
         self.battery = Panel("Battery")
         self.cpu_t = Panel("CPU temperature")
         self.gpu_t = Panel("GPU temperature", "No NVIDIA GPU detected")
         self.peak: dict[str, float] = {}
+        self.fan_rows: dict[str, BarRow] = {}
         self.cpu_w, self.gpu_w = BarRow("CPU package"), BarRow("GPU package")
         self.charge, self.wear = BarRow("Charge"), BarRow("Wear")
         self.cpu_row, self.gpu_row = BarRow("Package"), BarRow("Core")
@@ -348,22 +351,48 @@ class SensorsPage(QWidget):
             for r in rows:
                 panel.lay.addWidget(r)
             panel.lay.addStretch()
+        self.fans.lay.addStretch()  # fan rows are inserted before this
 
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(16)
-        for i, w in enumerate((self.power, self.battery, self.cpu_t, self.gpu_t)):
-            grid.addWidget(w, i // 2, i % 2)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
+        panels = (self.fans, self.power, self.battery, self.cpu_t, self.gpu_t)
+        for i, w in enumerate(panels):
+            grid.addWidget(w, i // 3, i % 3)
+        for c in range(3):
+            grid.setColumnStretch(c, 1)
         grid.setRowStretch(2, 1)
 
     def _watts(self, row: BarRow, key: str, w: float) -> None:
         peak = self.peak[key] = max(self.peak.get(key, 0.0), w, 10.0)
         row.set_pct(w / peak * 100, f"{w:.1f} W")
 
+    def _fan(self, name: str, rpm: float) -> None:
+        row = self.fan_rows.get(name)
+        if row is None:
+            row = self.fan_rows[name] = BarRow(name)
+            self.fans.lay.insertWidget(self.fans.lay.count() - 1, row)
+        peak = self.peak[name] = max(self.peak.get(name, 0.0), rpm, 3000.0)
+        row.set_pct(rpm / peak * 100, f"{rpm:.0f} RPM")
+
     def update_from(self, s: Snapshot) -> None:
         sn = s.sensors
+
+        readings = [(f.name, float(f.rpm)) for f in (s.acpi_fans or ())]
+        if sn is not None:
+            readings += [(f.name, f.value) for f in sn.fans]
+        for name, rpm in readings:
+            self._fan(name, rpm)
+        if readings:
+            self.fans.sub.setText("")
+        elif s.acpi_fans is None:
+            self.fans.sub.setText(
+                "No fan data. Needs an ASUS laptop with the ASUS driver "
+                "(try running as admin), or LibreHardwareMonitor fan sensors."
+            )
+        else:
+            self.fans.sub.setText("No fan sensors exposed")
+
         if sn is None:
             msg = "LibreHardwareMonitor not reachable (port 8085)"
             for p in (self.power, self.battery, self.cpu_t):
@@ -394,6 +423,7 @@ class SensorsPage(QWidget):
         if s.gpu:
             self.gpu_t.sub.setText(s.gpu.name)
             self.gpu_row.set_pct(s.gpu.temp_c, f"{s.gpu.temp_c:.0f} °C")
+
 
 class MainWindow(QWidget):
     def __init__(self) -> None:

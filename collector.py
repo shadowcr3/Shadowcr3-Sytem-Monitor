@@ -8,6 +8,7 @@ import psutil
 
 from gpu import GpuInfo, read as read_gpu
 from lhm import Poller, Sensors
+from fans import Fan, FanReader
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class Snapshot:
     net_down_bps: float
     gpu: GpuInfo | None
     sensors: Sensors | None
+    acpi_fans: tuple[Fan, ...] | None
 
 
 class Collector:
@@ -44,6 +46,7 @@ class Collector:
         io = psutil.disk_io_counters()
         self._last_disk = (time.monotonic(), io.read_bytes, io.write_bytes) if io else None
         self._lhm = Poller()
+        self._fans = FanReader()
 
     def sample(self) -> Snapshot:
         cpu = psutil.cpu_percent(interval=None)
@@ -72,6 +75,7 @@ class Collector:
             net_down_bps=down,
             gpu=read_gpu(),
             sensors=self._lhm.latest(),
+            acpi_fans=self._fans.latest(),
         )
 
     def _net_rates(self) -> tuple[float, float]:
